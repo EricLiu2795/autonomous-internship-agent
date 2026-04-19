@@ -167,11 +167,13 @@ export function generateFallbackStrategy(
   profile: UserProfile,
   jobs: Job[]
 ): InternshipStrategy {
-  console.log('⚠️ Using fallback strategy generator');
+  console.log('[INFO] Using TypeScript fallback generator');
+  console.log(`[INFO] Generating strategy for ${jobs.length} ranked jobs`);
 
   // Simple matching logic - use scores if available
   const matchedCompanies = jobs.slice(0, 5).map((job, idx) => ({
     name: job.company,
+    role: job.title,
     logo: getCompanyLogo(job.company),
     color: getGradientColor(idx),
     matchPercentage: job.score || (95 - idx * 2),

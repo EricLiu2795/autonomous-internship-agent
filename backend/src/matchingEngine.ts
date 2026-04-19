@@ -44,6 +44,70 @@ const WEIGHTS = {
 };
 
 /**
+ * Intent layer: CS students seeking internships
+ */
+const INTENT_BOOST = {
+  high: 15,    // High-priority intern roles
+  medium: 5,   // New grad / associate roles
+  low: -10,    // Senior / manager roles
+};
+
+const HIGH_PRIORITY_ROLES = [
+  'software engineer intern',
+  'swe intern',
+  'backend intern',
+  'frontend intern',
+  'full stack intern',
+  'fullstack intern',
+  'ml intern',
+  'machine learning intern',
+  'data intern',
+  'engineering intern',
+];
+
+const MEDIUM_PRIORITY_ROLES = [
+  'new grad',
+  'associate engineer',
+  'junior engineer',
+  'entry level',
+];
+
+const LOW_PRIORITY_ROLES = [
+  'senior',
+  'staff',
+  'principal',
+  'manager',
+  'director',
+  'vp',
+  'lead',
+];
+
+/**
+ * Reputable tech companies boost
+ */
+const REPUTABLE_COMPANIES = [
+  'Google',
+  'Meta',
+  'Facebook',
+  'Microsoft',
+  'Amazon',
+  'Datadog',
+  'Stripe',
+  'Nvidia',
+  'OpenAI',
+  'Anthropic',
+  'Apple',
+  'Netflix',
+  'Tesla',
+  'Uber',
+  'Lyft',
+  'Airbnb',
+  'Dropbox',
+];
+
+const COMPANY_REPUTATION_BOOST = 8; // Extra points for reputable companies
+
+/**
  * Company preference categories
  */
 const COMPANY_CATEGORIES = {
@@ -216,6 +280,40 @@ function computePreferenceMatch(job: Job, profile: UserProfile): number {
 }
 
 /**
+ * Apply intent boost for CS students seeking internships
+ */
+function computeIntentBoost(job: Job): number {
+  const jobTitle = job.title.toLowerCase();
+
+  // High priority: Specific intern roles
+  if (HIGH_PRIORITY_ROLES.some(role => jobTitle.includes(role))) {
+    return INTENT_BOOST.high;
+  }
+
+  // Low priority: Senior/manager roles
+  if (LOW_PRIORITY_ROLES.some(role => jobTitle.includes(role))) {
+    return INTENT_BOOST.low;
+  }
+
+  // Medium priority: New grad / associate
+  if (MEDIUM_PRIORITY_ROLES.some(role => jobTitle.includes(role))) {
+    return INTENT_BOOST.medium;
+  }
+
+  return 0; // No boost
+}
+
+/**
+ * Apply reputation boost for well-known tech companies
+ */
+function computeReputationBoost(job: Job): number {
+  if (REPUTABLE_COMPANIES.some(company => job.company.includes(company))) {
+    return COMPANY_REPUTATION_BOOST;
+  }
+  return 0;
+}
+
+/**
  * Compute overall match score for a job
  */
 export function computeMatchScore(job: Job, profile: UserProfile): ScoredJob {
@@ -228,13 +326,22 @@ export function computeMatchScore(job: Job, profile: UserProfile): ScoredJob {
   };
 
   // Weighted total
-  const score = Math.round(
+  let score = Math.round(
     breakdown.role * WEIGHTS.role +
     breakdown.skills * WEIGHTS.skills +
     breakdown.location * WEIGHTS.location +
     breakdown.seniority * WEIGHTS.seniority +
     breakdown.preference * WEIGHTS.preference
   );
+
+  // Apply intent boost (for CS students seeking internships)
+  score += computeIntentBoost(job);
+
+  // Apply reputation boost (for well-known companies)
+  score += computeReputationBoost(job);
+
+  // Clamp to 0-100 range
+  score = Math.max(0, Math.min(100, score));
 
   return {
     ...job,

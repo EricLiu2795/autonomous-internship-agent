@@ -117,6 +117,7 @@ Return ONLY a valid JSON object (no markdown, no code blocks) with this EXACT st
   "companies": [
     {
       "name": "Company Name",
+      "role": "Job Title from the ranked list",
       "logo": "emoji (🔍 Google, 👥 Meta, 🤖 AI companies, 📈 Finance, etc.)",
       "color": "from-blue-500 to-blue-600",
       "matchPercentage": 95,

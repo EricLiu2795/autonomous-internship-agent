@@ -23,6 +23,7 @@ export interface MatchBreakdown {
 
 export interface Company {
   name: string;
+  role?: string;
   logo: string;
   color: string;
   matchPercentage: number;

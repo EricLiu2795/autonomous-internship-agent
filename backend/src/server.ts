@@ -7,7 +7,10 @@ import { callAraAgent, generateFallbackStrategy } from './araIntegration.js';
 import { scoreAndRankJobs } from './matchingEngine.js';
 import { fetchRecruiterEmails, generateFollowUpDraft, inferStatusFromEmails } from './outlookIntegration.js';
 import { syncToNotion, getNotionApplications, getNotionStats, batchUpdateFromEmails } from './notionIntegration.js';
-import { generateWithAnthropic } from './anthropicFallback.js';
+import { classifyEmailsWithAra } from './emailClassifier.js';
+import { generateTrackerUpdates, applyTrackerUpdates, PipelineState } from './pipelineUpdater.js';
+import { generateCalendarActions } from './calendarPlanner.js';
+import { buildInboxDigest, generateSummaryText, getQuickStats } from './digestBuilder.js';
 
 dotenv.config();
 
@@ -17,6 +20,9 @@ const PORT = process.env.PORT || 3001;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// In-memory pipeline state (for demo)
+let pipelineState: PipelineState = {};
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -80,10 +86,9 @@ app.post('/generate-strategy', async (req, res) => {
       console.log(`  ${idx + 1}. ${job.company} - ${job.title} (${job.score}%)`);
     });
 
-    // Step 3: Generate strategy with three-tier fallback
-    // Tier 1: Ara (primary - includes Claude access)
-    // Tier 2: Anthropic API direct (middle fallback)
-    // Tier 3: TypeScript generator (final fallback)
+    // Step 3: Generate strategy with two-tier fallback
+    // Tier 1: Ara automation (primary - includes Claude access)
+    // Tier 2: TypeScript generator (fallback for demo reliability)
     let strategy;
     try {
       console.log('\n🤖 [Tier 1] Calling Ara automation (primary)...');
@@ -91,18 +96,9 @@ app.post('/generate-strategy', async (req, res) => {
       console.log('✅ Ara agent completed successfully');
     } catch (araError) {
       console.error('⚠️ Ara agent failed:', araError);
-
-      // Try Anthropic API fallback
-      try {
-        console.log('📞 [Tier 2] Trying Anthropic API fallback...');
-        strategy = await generateWithAnthropic(profile, uniqueJobs);
-        console.log('✅ Anthropic API fallback succeeded');
-      } catch (anthropicError) {
-        console.error('⚠️ Anthropic API failed:', anthropicError);
-        console.log('🔧 [Tier 3] Using TypeScript generator (final fallback)...');
-        strategy = generateFallbackStrategy(profile, uniqueJobs);
-        console.log('✅ TypeScript fallback strategy generated');
-      }
+      console.log('🔧 [Tier 2] Using TypeScript fallback...');
+      strategy = generateFallbackStrategy(profile, uniqueJobs);
+      console.log('✅ TypeScript fallback strategy generated');
     }
 
     // Step 4: Sync top unique jobs to Notion
@@ -169,16 +165,12 @@ app.get('/test-strategy', async (req, res) => {
       return true;
     });
 
-    // Three-tier fallback
+    // Two-tier fallback
     let strategy;
     try {
       strategy = await callAraAgent(testProfile, uniqueJobs);
     } catch (araError) {
-      try {
-        strategy = await generateWithAnthropic(testProfile, uniqueJobs);
-      } catch {
-        strategy = generateFallbackStrategy(testProfile, uniqueJobs);
-      }
+      strategy = generateFallbackStrategy(testProfile, uniqueJobs);
     }
 
     console.log('✅ Test successful');
@@ -292,26 +284,193 @@ app.get('/notion/stats', async (req, res) => {
   }
 });
 
+// ============================================================
+// NEW: Inbox Analysis Endpoints
+// ============================================================
+
+/**
+ * POST /analyze-inbox - Main inbox analysis workflow
+ *
+ * Orchestrates the full recruiting inbox workflow:
+ * 1. Fetch emails (mock data for demo)
+ * 2. Classify emails (Ara primary, TypeScript fallback)
+ * 3. Update pipeline tracker
+ * 4. Generate calendar actions
+ * 5. Build combined digest
+ */
+app.post('/analyze-inbox', async (req, res) => {
+  const startTime = Date.now();
+
+  try {
+    console.log('\n' + '='.repeat(60));
+    console.log('📧 NEW REQUEST - Analyzing Inbox with Ara Gmail Connector');
+    console.log('='.repeat(60));
+
+    // Step 1: Classify emails using Ara Gmail connector
+    // Ara will read Gmail directly and classify recruiting emails
+    console.log('\n🔍 Fetching and classifying emails with Ara...');
+    const classifiedEmails = await classifyEmailsWithAra();
+    console.log(`[OK] Classified ${classifiedEmails.length} recruiting emails`);
+
+    // Step 3: Generate tracker updates
+    console.log('\n📊 Updating pipeline tracker...');
+    const trackerUpdates = generateTrackerUpdates(classifiedEmails, pipelineState);
+    pipelineState = applyTrackerUpdates(trackerUpdates, pipelineState);
+    console.log(`[OK] Applied ${trackerUpdates.length} tracker updates`);
+
+    // Step 4: Generate calendar actions
+    console.log('\n📅 Generating calendar actions...');
+    const calendarActions = generateCalendarActions(classifiedEmails, trackerUpdates);
+    console.log(`[OK] Generated ${calendarActions.length} calendar actions`);
+
+    // Step 5: Build digest
+    console.log('\n📦 Building digest...');
+    const emailsForDigest = classifiedEmails.map(ce => ce.email);
+    const digest = buildInboxDigest(
+      emailsForDigest,
+      classifiedEmails,
+      trackerUpdates,
+      pipelineState,
+      calendarActions
+    );
+    const summaryText = generateSummaryText(digest);
+    const quickStats = getQuickStats(digest);
+
+    const duration = Date.now() - startTime;
+    console.log(`\n⏱️  Total time: ${duration}ms`);
+    console.log('='.repeat(60) + '\n');
+
+    res.json({
+      success: true,
+      digest,
+      summary: summaryText,
+      quickStats,
+      metadata: {
+        processedAt: new Date().toISOString(),
+        duration: `${duration}ms`,
+        demoMode: true,
+      },
+    });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error(`\n❌ Error after ${duration}ms:`, error);
+    console.error('='.repeat(60) + '\n');
+
+    res.status(500).json({
+      error: 'Failed to analyze inbox',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * GET /demo-emails - View classified emails from Ara
+ */
+app.get('/demo-emails', async (req, res) => {
+  try {
+    const classifiedEmails = await classifyEmailsWithAra();
+
+    res.json({
+      emails: classifiedEmails.map(ce => ({
+        id: ce.email.id,
+        from: ce.email.from,
+        subject: ce.email.subject,
+        receivedAt: ce.email.receivedAt,
+        category: ce.category,
+        subcategory: ce.subcategory,
+        company: ce.company,
+        role: ce.role,
+      })),
+      count: classifiedEmails.length,
+      demoMode: true,
+      source: 'Ara Gmail Connector',
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to fetch emails',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * GET /tracker - View current pipeline tracker state
+ */
+app.get('/tracker', (req, res) => {
+  try {
+    const companies = Object.entries(pipelineState).map(([company, entry]) => ({
+      company,
+      role: entry.role,
+      status: entry.status,
+      lastUpdated: entry.lastUpdated.toISOString(),
+      updateCount: entry.history.length,
+    }));
+
+    const stats = {
+      total: companies.length,
+      byStatus: companies.reduce((acc, c) => {
+        acc[c.status] = (acc[c.status] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>),
+    };
+
+    res.json({
+      companies,
+      stats,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to fetch tracker',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * DELETE /tracker/reset - Reset pipeline tracker (demo utility)
+ */
+app.delete('/tracker/reset', (req, res) => {
+  try {
+    pipelineState = {};
+    console.log('[INFO] Pipeline tracker reset');
+
+    res.json({
+      success: true,
+      message: 'Pipeline tracker reset successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to reset tracker',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
-║   🤖  Ara Autonomous Internship Agent - Backend API      ║
+║   🤖  Ara Autonomous Recruiting Inbox Agent              ║
 ║                                                           ║
 ║   Status: ✅ Running                                      ║
 ║   Port: ${PORT}                                              ║
 ║   Environment: ${process.env.NODE_ENV || 'development'}                              ║
 ║                                                           ║
-║   Endpoints:                                              ║
-║   • GET  /health              - Health check              ║
-║   • POST /generate-strategy   - Generate strategy (MAIN)  ║
-║   • GET  /test-strategy       - Test with sample data     ║
-║   • GET  /debug/jobs          - View job data             ║
+║   Primary Endpoints:                                      ║
+║   • POST /analyze-inbox       - Analyze recruiting emails ║
+║   • GET  /demo-emails         - View classified emails    ║
+║   • GET  /tracker             - View pipeline tracker     ║
+║   • DELETE /tracker/reset     - Reset tracker (demo)      ║
 ║                                                           ║
-║   Integration:                                            ║
-║   • Job Data: Greenhouse API (with fallback)              ║
-║   • AI Agent: Ara Automation (../app.py)                  ║
-║   • Fallback: Enabled for demo stability                  ║
+║   Legacy Endpoints:                                       ║
+║   • POST /generate-strategy   - Job matching (secondary)  ║
+║   • GET  /health              - Health check              ║
+║                                                           ║
+║   Architecture:                                           ║
+║   • Email Source: Ara Gmail Connector (reads Gmail)       ║
+║   • Classifier: Ara automation (email_classifier.py)      ║
+║   • Fallback: Mock data for demo stability               ║
+║   • Actions: Pipeline tracking + calendar planning        ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
   `);
